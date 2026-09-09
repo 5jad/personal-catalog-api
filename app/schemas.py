@@ -36,6 +36,10 @@ class ProductCreate(BaseModel):
     title: str
     status: Optional[ProductStatus] = ProductStatus.in_stock
 
+class ProductUpdate(BaseModel):
+    title: Optional[str]
+    status: Optional[ProductStatus]
+
 class ProductRead(BaseModel):
     id: int
     title: str
