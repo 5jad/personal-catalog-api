@@ -21,6 +21,9 @@ class Token(BaseModel):
 class WarehouseCreate(BaseModel):
     name: str
 
+class WarehouseUpdate(BaseModel):
+    name: Optional[str]
+
 class WarehouseRead(BaseModel):
     id: int
     name: str
