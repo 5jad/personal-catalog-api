@@ -1,18 +1,16 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+from app.db.session import get_db, SessionLocal
 from app import models, schemas
 import csv
 import json
 from pathlib import Path
+from app.core.security import get_current_user
 
 router = APIRouter()
 
-def get_current_user_placeholder():
-    raise HTTPException(status_code=501, detail="Not implemented: authentication dependency")
-
 @router.post("/", response_model=schemas.ExportJobRead)
-def request_export(warehouse_id: int, format: str = "csv", background_tasks: BackgroundTasks = Depends(), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user_placeholder)):
+def request_export(warehouse_id: int, format: str = "csv", background_tasks: BackgroundTasks = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     # create export job
     job = models.ExportJob(warehouse_id=warehouse_id, user_id=current_user.id)
     db.add(job)
@@ -20,9 +18,11 @@ def request_export(warehouse_id: int, format: str = "csv", background_tasks: Bac
     db.refresh(job)
 
     def _do_export(job_id: int, fmt: str):
-        jobdb = db.get(models.ExportJob, job_id)
+        # Use a separate DB session for background work
+        bg_db = SessionLocal()
         try:
-            products = db.query(models.Product).filter(models.Product.warehouse_id == warehouse_id).all()
+            jobdb = bg_db.get(models.ExportJob, job_id)
+            products = bg_db.query(models.Product).filter(models.Product.warehouse_id == warehouse_id).all()
             out_dir = Path("/tmp/exports")
             out_dir.mkdir(parents=True, exist_ok=True)
             file_path = out_dir / f"export_{job_id}.{fmt}"
@@ -38,9 +38,18 @@ def request_export(warehouse_id: int, format: str = "csv", background_tasks: Bac
             jobdb.file_path = str(file_path)
             jobdb.status = models.ExportJobStatus.completed
         except Exception:
-            jobdb.status = models.ExportJobStatus.failed
-        db.add(jobdb)
-        db.commit()
+            if jobdb:
+                jobdb.status = models.ExportJobStatus.failed
+        finally:
+            bg_db.add(jobdb)
+            bg_db.commit()
+            bg_db.close()
 
-    background_tasks.add_task(_do_export, job.id, format)
+    # BackgroundTasks should be provided by FastAPI; add the task if available
+    if background_tasks is not None:
+        background_tasks.add_task(_do_export, job.id, format)
+    else:
+        # Fall back to synchronous export (useful for tests)
+        _do_export(job.id, format)
+
     return job
